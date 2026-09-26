@@ -51,11 +51,27 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          uv pip install --system -e ".[dev]" pytest pytest-mock anyio
+          uv pip install --system -e . pytest pytest-mock anyio
 
       - name: Initialize Database Schema
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rag_db
         run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d rag_db -f src/db/schema.sql
+          python -c "
+          import asyncio
+          from src.db.connection import get_db_pool, init_db
+
+          async def main():
+              pool = await get_db_pool()
+              await init_db(pool)
+              print('CI Database schema initialized.')
+
+          asyncio.run(main())
+          "
 
       - name: Index Document into PostgreSQL
         env:
