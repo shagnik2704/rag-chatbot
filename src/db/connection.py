@@ -17,7 +17,11 @@ _pool_lock = asyncio.Lock()
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
     """Configures each connection in the pool with pgvector codecs."""
-    await register_vector(conn)
+    try:
+        await register_vector(conn)
+    except ValueError:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        await register_vector(conn)
 
 
 async def get_db_pool() -> asyncpg.Pool:
