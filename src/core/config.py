@@ -59,6 +59,22 @@ class Settings(BaseSettings):
         description="ChromaDB collection name",
     )
 
+    # PostgreSQL & pgvector Configuration
+    postgres_host: str = Field(default="localhost", description="PostgreSQL host")
+    postgres_port: int = Field(default=5432, description="PostgreSQL port")
+    postgres_user: str = Field(default="", description="PostgreSQL user")
+    postgres_password: str = Field(default="", description="PostgreSQL password")
+    postgres_db: str = Field(default="rag_db", description="PostgreSQL database name")
+    database_url: str | None = Field(default=None, description="Optional full database connection URL")
+
+    # Semantic Cache Configuration
+    semantic_cache_threshold: float = Field(
+        default=0.92, ge=0.0, le=1.0, description="Cosine similarity threshold for cache hits"
+    )
+    semantic_cache_max_size: int = Field(
+        default=5000, gt=0, description="Max entries before LRU eviction"
+    )
+
     # Retrieval Configuration (Hybrid: Dense + BM25)
     top_k_retrieval: int = Field(
         default=4,
@@ -94,7 +110,21 @@ class Settings(BaseSettings):
     def ensure_path(cls, v: str | Path) -> Path:
         return Path(v) if isinstance(v, str) else v
 
+    def get_database_dsn(self) -> str:
+        """Returns standard PostgreSQL connection DSN."""
+        if self.database_url:
+            return self.database_url
+        user = self.postgres_user or ""
+        pwd_part = f":{self.postgres_password}" if self.postgres_password else ""
+        auth_part = f"{user}{pwd_part}@" if user else ""
+        return f"postgresql://{auth_part}{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Factory function for retrieving cached application settings."""
     return Settings()
+
