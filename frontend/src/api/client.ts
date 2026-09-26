@@ -1,6 +1,6 @@
 import type { QueryParams, QueryResponse, SystemStatus } from "../types/chat";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 export async function fetchSystemStatus(): Promise<SystemStatus> {
   const res = await fetch(`${API_BASE}/status`);
