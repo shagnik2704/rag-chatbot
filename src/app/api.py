@@ -283,3 +283,30 @@ async def reindex_document(x_admin_key: str | None = Header(default=None)):
         "message": "Successfully re-indexed document into PostgreSQL + pgvector",
         "total_chunks": len(chunks),
     }
+
+
+# Static React SPA serving for production single-container deployment
+frontend_dist = Path("frontend/dist")
+if frontend_dist.exists() and (frontend_dist / "index.html").exists():
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        if full_path.startswith("api") or full_path in {
+            "healthz",
+            "readyz",
+            "docs",
+            "openapi.json",
+            "redoc",
+        }:
+            raise HTTPException(status_code=404, detail="Not Found")
+        file_candidate = frontend_dist / full_path
+        if file_candidate.is_file():
+            return FileResponse(file_candidate)
+        return FileResponse(frontend_dist / "index.html")
+

@@ -9,6 +9,7 @@ export const App: React.FC = () => {
     messages,
     isLoading,
     sendMessage,
+    stopStreaming,
     clearChat,
   } = useChat();
 
@@ -26,10 +27,12 @@ export const App: React.FC = () => {
         <InputBar
           onSendMessage={sendMessage}
           isLoading={isLoading}
+          onStop={stopStreaming}
         />
       </div>
     </div>
   );
+
 };
 
 export default App;

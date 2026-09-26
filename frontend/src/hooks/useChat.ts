@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatMessage, SystemStatus } from "../types/chat";
 import { fetchSystemStatus, fetchSections, streamQuery, triggerReindex } from "../api/client";
 
@@ -13,6 +13,8 @@ export function useChat() {
   const [selectedSection, setSelectedSection] = useState<string>("");
   const [topK, setTopK] = useState<number>(4);
   const [apiKey, setApiKey] = useState<string>("");
+
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -29,9 +31,28 @@ export function useChat() {
 
   useEffect(() => {
     refreshStatus();
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [refreshStatus]);
 
+  const stopStreaming = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+  };
+
   const sendMessage = async (query: string) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -79,6 +100,7 @@ export function useChat() {
         },
         () => {
           setIsLoading(false);
+          abortControllerRef.current = null;
           const lower = accumulated.toLowerCase();
           const isFallback =
             lower.includes("not covered in the") ||
@@ -103,6 +125,7 @@ export function useChat() {
         },
         (errText: string) => {
           setIsLoading(false);
+          abortControllerRef.current = null;
           setError(errText);
           setMessages((prev) => [
             ...prev,
@@ -113,10 +136,17 @@ export function useChat() {
               timestamp: new Date().toLocaleTimeString(),
             },
           ]);
-        }
+        },
+        controller.signal
       );
     } catch (err: any) {
+      if (err.name === "AbortError") {
+        setIsLoading(false);
+        abortControllerRef.current = null;
+        return;
+      }
       setIsLoading(false);
+      abortControllerRef.current = null;
       setError(err.message);
       setMessages((prev) => [
         ...prev,
@@ -161,6 +191,7 @@ export function useChat() {
     apiKey,
     setApiKey,
     sendMessage,
+    stopStreaming,
     reindex,
     clearChat,
   };

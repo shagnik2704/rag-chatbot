@@ -53,15 +53,26 @@ export async function streamQuery(
   params: QueryParams,
   onToken: (token: string) => void,
   onComplete: () => void,
-  onError: (err: string) => void
+  onError: (err: string) => void,
+  signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/query/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(params),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/query/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+      signal,
+    });
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      onComplete();
+      return;
+    }
+    throw err;
+  }
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({ detail: res.statusText }));
@@ -76,38 +87,52 @@ export async function streamQuery(
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
-
-      const dataStr = trimmed.slice(6).trim();
-      if (dataStr === "[DONE]") {
-        onComplete();
-        return;
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        await reader.cancel();
+        break;
       }
 
-      try {
-        const parsed = JSON.parse(dataStr);
-        if (parsed.error) {
-          onError(parsed.error);
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+        const dataStr = trimmed.slice(6).trim();
+        if (dataStr === "[DONE]") {
+          onComplete();
           return;
         }
-        if (parsed.token) {
-          onToken(parsed.token);
+
+        try {
+          const parsed = JSON.parse(dataStr);
+          if (parsed.error) {
+            onError(parsed.error);
+            return;
+          }
+          if (parsed.token) {
+            onToken(parsed.token);
+          }
+        } catch {
+          // Continue parsing subsequent lines
         }
-      } catch {
-        // Continue parsing subsequent lines
       }
     }
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      onComplete();
+      return;
+    }
+    throw err;
   }
 
   onComplete();
 }
+

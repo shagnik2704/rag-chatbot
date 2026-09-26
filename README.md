@@ -1,18 +1,18 @@
 # Enterprise RAG Chatbot: Future-Ready Children Q&A
 
-An enterprise-grade Retrieval-Augmented Generation (RAG) system for querying the **Future-Ready Children Champion FAQ & Talking Points** document. Powered by **Sarvam AI (`glm5.3`)**, local dense vector embeddings (`bge-small-en-v1.5`), BM25 sparse lexical search with Reciprocal Rank Fusion (RRF), a FastAPI backend, and a clean responsive React + TypeScript frontend.
+An enterprise-grade Retrieval-Augmented Generation (RAG) system for querying the **Future-Ready Children Champion FAQ & Talking Points** document. Powered by **Sarvam AI (`glm5.3`)**, local dense vector embeddings (`bge-small-en-v1.5`), unified **PostgreSQL + `pgvector`** hybrid retrieval with Reciprocal Rank Fusion (RRF), a FastAPI backend, and a clean responsive React + TypeScript frontend.
 
 ---
 
 ## Key Features
 
-- **Structural Q&A Ingestion:** Purpose-built parser that respects section hierarchies and question-answer pairs rather than blind token chunking.
-- **Dual-Index Hybrid Retrieval:** Dense vector similarity (ChromaDB) combined with BM25 sparse keyword ranking via Reciprocal Rank Fusion (RRF).
-- **Sarvam AI GLM-5.3 Integration:** Resilient LLM inference client with exponential backoff (`tenacity`) and timeout handling.
-- **Grounded Attribution:** Enforces factual answers, citations to specific sections/questions, champion talking points, and escalation routing.
-- **Clean React + TypeScript Frontend:** Minimalist, enterprise-grade design without emojis or extravagant styling.
-- **FastAPI REST Service:** Fully typed backend with CORS and OpenAPI specs.
-- **CLI & Test Suite:** Rich terminal interface and 100% passing Pytest unit test coverage.
+- **PostgreSQL + `pgvector` Unified Storage:** Eliminates embedded SQLite file lock contentions and in-memory heap duplication with a dedicated, ACID-compliant database.
+- **Pure SQL Hybrid Retrieval (CTE):** Dense cosine similarity (HNSW index) and sparse keyword search (`tsvector` + GIN index) fused via Reciprocal Rank Fusion (RRF) directly inside the database engine.
+- **PostgreSQL Semantic Cache with LRU:** Sub-30ms response time for semantically equivalent queries with automatic LRU eviction and multi-worker concurrency safety.
+- **Sarvam AI GLM-5.3 Integration:** Resilient LLM inference client with exponential backoff (`tenacity`), streaming SSE tokens, and shared connection pooling (`httpx.AsyncClient`).
+- **Grounded Attribution:** Enforces factual answers, citations to specific sections/questions, and escalation routing to campaign leadership.
+- **Client-Facing UI:** React + TypeScript (Vite) interface with real-time token streaming and stream interruption (`AbortController`).
+- **Docker & CI/CD Ready:** Multi-stage `Dockerfile`, `docker-compose.yml`, and GitHub Actions workflow with automated pgvector test services.
 
 ---
 
@@ -22,56 +22,105 @@ An enterprise-grade Retrieval-Augmented Generation (RAG) system for querying the
 rag-chatbot/
 ├── backend: FastAPI (port 8000)
 │   ├── src/core/           # Settings, logging, and custom typed exceptions
+│   ├── src/db/             # PostgreSQL connection pool & schema DDL (pgvector + tsvector)
 │   ├── src/models/         # Chunk, query, and response domain models
 │   ├── src/ingestion/      # Loaders (PDF/DOCX) & QAStructuralChunker
 │   ├── src/embeddings/     # LocalSentenceTransformerEmbeddings
-│   ├── src/vectorstore/    # ChromaVectorStore (persistent)
-│   ├── src/retrieval/      # BM25Index & HybridRetriever (Dense + BM25 with RRF)
+│   ├── src/vectorstore/    # PostgresVectorStore (pgvector HNSW + tsvector GIN)
 │   ├── src/llm/            # SarvamGLMClient (model: glm5.3) & Grounded Prompts
-│   ├── src/services/       # IndexingService & RAGService
-│   └── src/app/api.py      # FastAPI application
+│   ├── src/services/       # IndexingService, PostgresSemanticCache, & RAGService
+│   └── src/app/api.py      # FastAPI application (serves API & React SPA)
 │
-└── frontend: React + TypeScript (Vite, port 5173)
+└── frontend: React + TypeScript (Vite, port 5173 / port 8000 in prod)
     ├── src/types/          # Type-safe chat, citation, and status schemas
-    ├── src/api/client.ts   # REST API client
+    ├── src/api/client.ts   # REST API client with AbortSignal stream cancellation
     ├── src/components/     # Modular enterprise UI components (no emojis)
-    ├── src/hooks/useChat.ts# Chat state and interaction hook
+    ├── src/hooks/useChat.ts# Chat state, streaming, and stop button logic
     └── src/index.css       # Clean, accessible design system styling
 ```
 
 ---
 
-## Quickstart
+## Quickstart with Docker Compose
 
-### 1. Environment Setup
+The easiest way to run the entire full-stack application (PostgreSQL + pgvector + FastAPI + React UI) is via Docker Compose:
+
 ```bash
-# Copy and update environment variables
+# 1. Clone repository and configure environment
 cp .env.example .env
-# Edit .env and configure your SARVAM_API_KEY
+# Set your SARVAM_API_KEY in .env
+
+# 2. Launch PostgreSQL with pgvector and full-stack app
+docker compose up -d
+
+# 3. Access application
+# Open http://localhost:8000 in your browser
 ```
 
-### 2. Index the Document
+---
+
+## Local Development Setup
+
+### 1. PostgreSQL with pgvector
 ```bash
-python -m src.app.cli index --file "data/raw/Future-Ready Children_ FAQ.docx"
+# Using Homebrew (macOS)
+brew install pgvector
+brew services restart postgresql@17
+
+# Create database and apply schema
+psql -d postgres -c "CREATE DATABASE rag_db;"
+psql -d rag_db -f src/db/schema.sql
 ```
 
-### 3. Start the Backend API (FastAPI)
+### 2. Python Environment Setup
 ```bash
-source .venv/bin/activate
+# Using uv (fastest)
+uv sync
+# Or source .venv/bin/activate
+```
+
+### 3. Ingest and Index the Document
+```bash
+python -c "
+import asyncio
+from src.embeddings.local_provider import LocalSentenceTransformerEmbeddings
+from src.vectorstore.postgres_store import PostgresVectorStore
+from src.services.indexing_service import IndexingService
+
+async def main():
+    emb = LocalSentenceTransformerEmbeddings()
+    vs = PostgresVectorStore()
+    idx = IndexingService(vector_store=vs, embedding_provider=emb)
+    await idx.aindex_document('data/raw/Future-Ready Children_ FAQ.docx', clear_existing=True)
+
+asyncio.run(main())
+"
+```
+
+### 4. Run Backend Server
+```bash
 uvicorn src.app.api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### 4. Start the Frontend (React + TypeScript)
+### 5. Run Frontend Dev Server
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:5173](http://localhost:5173).
 
 ---
 
-## Running Tests
+## Testing & CI/CD
+
+Run the test suite across unit and database integration tests:
 ```bash
 .venv/bin/pytest -v
 ```
+
+GitHub Actions automatically runs:
+- Automated PostgreSQL 16 + `pgvector` service container
+- Full ingestion and hybrid retrieval test suite
+- Frontend build and TypeScript check (`npm run build`)
+- Multi-stage Docker build verification
