@@ -1,5 +1,4 @@
 import React from "react";
-import { FileText } from "lucide-react";
 import { SuggestedQueries } from "./SuggestedQueries";
 
 interface EmptyStateProps {
@@ -9,7 +8,19 @@ interface EmptyStateProps {
 export const EmptyState: React.FC<EmptyStateProps> = ({ onSelectQuery }) => {
   return (
     <div className="empty-state">
-      <FileText className="empty-state-icon" strokeWidth={1.5} />
+      <div className="empty-state-logos">
+        <img
+          src="/wheels-logo.png"
+          alt="WHEELS Global Foundation"
+          className="empty-logo wheels-empty-logo"
+        />
+        <span className="empty-logo-divider" />
+        <img
+          src="/edupyramids-logo.png"
+          alt="EduPyramids"
+          className="empty-logo edupyramids-empty-logo"
+        />
+      </div>
       <h2 className="empty-state-title">Future-Ready Children Knowledge Base</h2>
       <p className="empty-state-description">
         Query verified FAQs, implementation statistics, pedagogy standards, and talking points

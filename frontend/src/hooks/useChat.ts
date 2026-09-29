@@ -15,6 +15,7 @@ export function useChat() {
   const [apiKey, setApiKey] = useState<string>("");
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -35,6 +36,9 @@ export function useChat() {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
     };
   }, [refreshStatus]);
 
@@ -42,6 +46,10 @@ export function useChat() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+    }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
     setIsLoading(false);
   };
@@ -66,7 +74,27 @@ export function useChat() {
 
     const assistantId = `assistant-${Date.now()}`;
     let isFirstToken = true;
-    let accumulated = "";
+    let targetText = "";
+    let displayedText = "";
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    // Fluid 60fps typewriter smoothing queue
+    timerRef.current = setInterval(() => {
+      if (displayedText.length < targetText.length) {
+        const lag = targetText.length - displayedText.length;
+        const step = lag > 100 ? 6 : lag > 40 ? 4 : lag > 15 ? 2 : 1;
+        displayedText = targetText.slice(0, displayedText.length + step);
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantId ? { ...msg, content: displayedText } : msg
+          )
+        );
+      }
+    }, 16);
 
     try {
       await streamQuery(
@@ -77,53 +105,60 @@ export function useChat() {
           api_key: apiKey || undefined,
         },
         (token: string) => {
-          accumulated += token;
+          targetText += token;
           if (isFirstToken) {
             isFirstToken = false;
             setIsLoading(false);
+            displayedText = targetText.slice(0, 1);
             setMessages((prev) => [
               ...prev,
               {
                 id: assistantId,
                 role: "assistant",
-                content: accumulated,
+                content: displayedText,
                 timestamp: new Date().toLocaleTimeString(),
               },
             ]);
-          } else {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantId ? { ...msg, content: accumulated } : msg
-              )
-            );
           }
         },
         () => {
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          displayedText = targetText;
           setIsLoading(false);
           abortControllerRef.current = null;
-          const lower = accumulated.toLowerCase();
+          const lower = targetText.toLowerCase();
           const isFallback =
             lower.includes("not covered in the") ||
             lower.includes("please reach out directly");
 
-          if (isFallback) {
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantId
-                  ? {
-                      ...msg,
-                      is_fallback: true,
-                      fallback_contacts: [
-                        "sujathan@wheelsglobal.org",
-                        "saisudha@edupyramids.org",
-                      ],
-                    }
-                  : msg
-              )
-            );
-          }
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantId
+                ? {
+                    ...msg,
+                    content: targetText,
+                    ...(isFallback
+                      ? {
+                          is_fallback: true,
+                          fallback_contacts: [
+                            "sujathan@wheelsglobal.org",
+                            "saisudha@edupyramids.org",
+                          ],
+                        }
+                      : {}),
+                  }
+                : msg
+            )
+          );
         },
         (errText: string) => {
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
           setIsLoading(false);
           abortControllerRef.current = null;
           setError(errText);
@@ -140,6 +175,10 @@ export function useChat() {
         controller.signal
       );
     } catch (err: any) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
       if (err.name === "AbortError") {
         setIsLoading(false);
         abortControllerRef.current = null;
