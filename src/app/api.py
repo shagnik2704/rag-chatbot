@@ -279,6 +279,10 @@ async def reindex_document(x_admin_key: str | None = Header(default=None)):
         raise HTTPException(status_code=404, detail="No source document found in data/raw/")
 
     chunks = await indexing_service.aindex_document(doc_path, clear_existing=True)
+    semantic_cache = app_state.get("semantic_cache")
+    if semantic_cache:
+        await semantic_cache.aclear()
+
     return {
         "message": "Successfully re-indexed document into PostgreSQL + pgvector",
         "total_chunks": len(chunks),
