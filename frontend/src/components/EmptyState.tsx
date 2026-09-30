@@ -21,7 +21,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({ onSelectQuery }) => {
           className="empty-logo edupyramids-empty-logo"
         />
       </div>
-      <h2 className="empty-state-title">Future-Ready Children Knowledge Base</h2>
+      <h2 className="empty-state-title">Future-Ready Children</h2>
       <p className="empty-state-description">
         Query verified FAQs, implementation statistics, pedagogy standards, and talking points
         for the WHEELS Global Foundation and EduPyramids campaign.
