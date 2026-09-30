@@ -5,10 +5,10 @@ interface SuggestedQueriesProps {
 }
 
 const SAMPLE_QUERIES = [
-  "How much does it cost to support a school?",
-  "What is the Spoken Tutorial pedagogy and IEEE standard?",
-  "What is cYAAG and how does team participation work?",
-  "What are the implementation numbers in Maharashtra and MP?",
+  "Can I specify a particular school?",
+  "Will my contribution cover costs incurred by the schools in supporting this project?",
+  "Why can’t I pay in INR even though I have a bank account in India?",
+  "What courses will you offer? How many?",
 ];
 
 export const SuggestedQueries: React.FC<SuggestedQueriesProps> = ({ onSelectQuery }) => {
