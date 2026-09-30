@@ -48,3 +48,10 @@ ON semantic_cache USING hnsw (query_vector vector_cosine_ops);
 -- B-Tree index on last_accessed_at for LRU eviction queries
 CREATE INDEX IF NOT EXISTS idx_cache_last_accessed 
 ON semantic_cache (last_accessed_at);
+
+-- Metadata table for tracking document version/hash and auto-indexing
+CREATE TABLE IF NOT EXISTS rag_metadata (
+    key VARCHAR(64) PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);

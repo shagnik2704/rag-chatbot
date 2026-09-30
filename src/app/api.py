@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,73 @@ from src.vectorstore.postgres_store import PostgresVectorStore
 logger = setup_logger("rag_api")
 
 app_state: dict[str, Any] = {}
+
+
+def _get_file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _get_source_doc_path() -> Path | None:
+    docx_path = Path("data/raw/Future-Ready Children_ FAQ.docx")
+    if docx_path.exists():
+        return docx_path
+    pdf_path = Path("data/raw/Future-Ready Children_ FAQ.pdf")
+    if pdf_path.exists():
+        return pdf_path
+    return None
+
+
+async def check_and_auto_reindex() -> bool:
+    """Checks if the raw document hash has changed or the store is empty, and auto-reindexes."""
+    doc_path = _get_source_doc_path()
+    if not doc_path:
+        return False
+
+    db_pool = app_state.get("db_pool")
+    indexing_service: IndexingService | None = app_state.get("indexing_service")
+    semantic_cache: PostgresSemanticCache | None = app_state.get("semantic_cache")
+
+    if not db_pool or not indexing_service:
+        return False
+
+    current_hash = _get_file_sha256(doc_path)
+
+    try:
+        async with db_pool.acquire() as conn:
+            stored_hash = await conn.fetchval(
+                "SELECT value FROM rag_metadata WHERE key = 'doc_sha256';"
+            )
+            chunk_count = await conn.fetchval("SELECT count(*) FROM document_chunks;")
+    except Exception as e:
+        logger.warning(f"Could not query rag_metadata (database may be initialising): {e}")
+        return False
+
+    if stored_hash != current_hash or chunk_count == 0:
+        logger.info(
+            f"Auto-reindex triggered: document '{doc_path.name}' hash mismatch or empty store "
+            f"(stored={stored_hash[:8] if stored_hash else 'none'}, current={current_hash[:8]}, chunks={chunk_count})."
+        )
+        chunks = await indexing_service.aindex_document(doc_path, clear_existing=True)
+        if semantic_cache:
+            await semantic_cache.aclear()
+
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO rag_metadata (key, value, updated_at)
+                VALUES ('doc_sha256', $1, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+                """,
+                current_hash,
+            )
+        logger.info(f"Auto-reindex complete: {len(chunks)} chunks indexed into PostgreSQL.")
+        return True
+
+    return False
 
 
 @asynccontextmanager
@@ -68,8 +136,33 @@ async def lifespan(app: FastAPI):
     app_state["semantic_cache"] = semantic_cache
     app_state["http_client"] = http_client
 
+    # 5. Check and auto-reindex on startup if document has changed
+    try:
+        await check_and_auto_reindex()
+    except Exception as e:
+        logger.error(f"Error during startup auto-reindex check: {e}", exc_info=True)
+
+    # 6. Background document watcher loop (checks every 30 seconds for live updates)
+    async def document_watcher_loop():
+        while True:
+            try:
+                await asyncio.sleep(30)
+                await check_and_auto_reindex()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Error in document watcher loop: {e}")
+
+    watcher_task = asyncio.create_task(document_watcher_loop())
+
     logger.info("RAG API services fully initialized with PostgreSQL and connection pool.")
     yield
+
+    watcher_task.cancel()
+    try:
+        await watcher_task
+    except asyncio.CancelledError:
+        pass
 
     logger.info("Shutting down RAG API services...")
     await http_client.aclose()
@@ -270,18 +363,31 @@ async def stream_query(request: ChatRequest):
 async def reindex_document(x_admin_key: str | None = Header(default=None)):
     """Admin endpoint to re-index the FAQ document into PostgreSQL."""
     indexing_service: IndexingService = app_state["indexing_service"]
+    semantic_cache = app_state.get("semantic_cache")
+    db_pool = app_state.get("db_pool")
 
-    doc_path = Path("data/raw/Future-Ready Children_ FAQ.docx")
-    if not doc_path.exists():
-        doc_path = Path("data/raw/Future-Ready Children_ FAQ.pdf")
-
-    if not doc_path.exists():
+    doc_path = _get_source_doc_path()
+    if not doc_path:
         raise HTTPException(status_code=404, detail="No source document found in data/raw/")
 
     chunks = await indexing_service.aindex_document(doc_path, clear_existing=True)
-    semantic_cache = app_state.get("semantic_cache")
     if semantic_cache:
         await semantic_cache.aclear()
+
+    if db_pool:
+        current_hash = _get_file_sha256(doc_path)
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO rag_metadata (key, value, updated_at)
+                    VALUES ('doc_sha256', $1, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+                    """,
+                    current_hash,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to record hash in rag_metadata: {e}")
 
     return {
         "message": "Successfully re-indexed document into PostgreSQL + pgvector",
