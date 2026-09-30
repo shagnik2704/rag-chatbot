@@ -166,6 +166,9 @@ class QAStructuralChunker(BaseChunker):
             "team": "Team Mobilization",
             "points": "Gamification & Points",
             "timeline": "Campaign Timeline",
+            "inr": "Donation Currency & Policy",
+            "usd": "Donation Currency & Policy",
+            "bank account": "Donation Currency & Policy",
         }
         tags = set()
         for key, tag in keyword_map.items():
